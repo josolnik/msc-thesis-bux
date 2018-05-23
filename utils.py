@@ -1,3 +1,15 @@
+# ignore the deprecation warnings for XGBOOST
+
+import warnings
+
+def fxn():
+    warnings.warn("deprecated", DeprecationWarning)
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    fxn()
+
+
 import numpy as np 
 import pandas as pd 
 import matplotlib.pyplot as plt
@@ -5,13 +17,12 @@ import os
 import featuretools as ft
 import itertools
 
-
 # training a classifier / booster
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
 # from sklearn.ensemble import RandomForestClassifier
 # from sklearn.metrics import f1_score
-# from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix
 # from sklearn.model_selection import cross_val_score
 from sklearn.metrics import precision_recall_fscore_support as score
 from sklearn import metrics
@@ -50,7 +61,8 @@ def connect_to_db():
                  'ssl': False}
     conn = vertica_python.connect(**conn_info)
     cur = conn.cursor('dict')   
-    return cur
+    print("Connected to the database")
+    return conn, cur
 
 def sql_query(cur, query_string):
     cur.execute(query_string)
@@ -69,9 +81,12 @@ def create_entity_set(entityset_name, entityset_quads, entity_relationships):
                         time_index=es_quad[3])
     
     
-    for rel in entity_relationships:
-        es.add_relationship(ft.Relationship(es[rel[0]][rel[2]], es[rel[1]][rel[2]]))
-    
+    if len(entityset_quads) > 2:
+        for rel in entity_relationships:
+            es.add_relationship(ft.Relationship(es[rel[0]][rel[2]], es[rel[1]][rel[2]]))
+    elif len(entityset_quads) == 2:
+        er = entity_relationships
+        es.add_relationship(ft.Relationship(es[er[0]][er[2]], es[er[1]][er[2]]))
     return es
 
 # interesting values -> in transactions entity
@@ -140,7 +155,7 @@ def calculate_feature_matrix_top_features(es, features):
     # label_times, es = labels
     fm = ft.calculate_feature_matrix(features,
                                      entityset=es,
-                                     cutoff_time_in_index=True,
+                                     # cutoff_time_in_index=False,
                                      verbose=False)
 
 
@@ -210,7 +225,6 @@ def xgboost_predict(model, X_test, prediction_problem_type):
         return("Unknown prediction problem type specified: ", prediction_problem_type)
     
     return y_pred
-
 
 # REPORT
 
@@ -290,6 +304,7 @@ def feature_importances_xgb(model, feature_names):
     feature_importance = feature_importance.fillna(0)
     return feature_importance[['feature_name', 'importance']].sort_values(by='importance',
                                                                           ascending=False)
+
 
 
 #####################################################################################

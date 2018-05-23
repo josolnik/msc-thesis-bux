@@ -8,6 +8,8 @@ import pandas as pd
 
 def build_vix_features(cur, cohort_query_vix_normalized, cohort_query_vix):
     cohort_vix_normalized = utils.sql_query(cur, cohort_query_vix_normalized)
+    # fix missing crypto vix values, hard-coded non-normalized vix
+    cohort_vix_normalized = cohort_vix_normalized.append({'product_type': 'Crypto', 'average_vix_norm': 100}, ignore_index=True)
     cohorts = utils.sql_query(cur,cohort_query_vix)
     
     cohorts = cohorts.pivot(index='report_week', columns='product_type', values='average_vix').reset_index()
@@ -26,26 +28,35 @@ def build_vix_features(cur, cohort_query_vix_normalized, cohort_query_vix):
 
 def build_cohorts_entity(cur, users_from, users_till):
 
-    cohort_query_vix_normalized = """ 
+
+	if pd.to_datetime(users_from) >= pd.to_datetime('2016-01-01'):
+
+
+	    cohort_query_vix_normalized = """ 
+	    
+	            SELECT product_type, AVG(vix) as average_vix_norm
+	            FROM reporting.product_volatility
+	            WHERE report_date BETWEEN '2016-01-01' AND '2017-12-31'
+	            GROUP BY 1
+	            ORDER BY 1
+	        """
+	    
+	    cohort_query_vix = """ 
+	    
+	            SELECT date_trunc('week', report_date)::date as report_week, product_type, AVG(vix) as average_vix
+	            FROM reporting.product_volatility
+	            WHERE report_date BETWEEN '{users_from}' AND '{users_till}'
+	            GROUP BY 1,2
+	            ORDER BY 1
+	        """.format(users_from=users_from,users_till=users_till)
+	    
+	    print("Cohorts entity built")
+	    cohorts = build_vix_features(cur, cohort_query_vix_normalized, cohort_query_vix)
+	    return cohorts
+	else:
+		print("Cohorts entity not built - data not available")
+		return ["Empty cohorts entity"]
     
-            SELECT product_type, AVG(vix) as average_vix_norm
-            FROM reporting.product_volatility
-            WHERE report_date BETWEEN '2016-01-01' AND '2017-12-31'
-            GROUP BY 1
-            ORDER BY 1
-        """
-    
-    cohort_query_vix = """ 
-    
-            SELECT date_trunc('week', report_date)::date as report_week, product_type, AVG(vix) as average_vix
-            FROM reporting.product_volatility
-            WHERE report_date BETWEEN '{users_from}' AND '{users_till}'
-            GROUP BY 1,2
-            ORDER BY 1
-        """.format(users_from=users_from,users_till=users_till)
-    
-    cohorts = build_vix_features(cur, cohort_query_vix_normalized, cohort_query_vix)
-    return cohorts
 
 # USERS
 
@@ -74,10 +85,11 @@ def merge_users_features(user_details, users_initial_deposit_replace, cohorts, t
     # user_details['days_to_initial_deposit'].fillna(10000, inplace=True)	
     
     # merge cohort data
-    user_details = pd.merge(user_details, cohorts[['cohort_id', 'report_week']], on='report_week')
+    if len(cohorts) > 1:
+    	user_details = pd.merge(user_details, cohorts[['cohort_id', 'report_week']], how='left', on='report_week')
     
     # merge time to event features
-    user_details = pd.merge(user_details, time_to_event_features, on='user_id')
+    user_details = pd.merge(user_details, time_to_event_features, how='left', on='user_id')
     
     return user_details
 
@@ -85,11 +97,12 @@ def merge_users_features(user_details, users_initial_deposit_replace, cohorts, t
 
 def build_users_entity(cur, users_from, users_till, interval, cohorts, cohort_size):
     ### Users basic features
+    # nationality
 
 	query_users = """ 
 
 	            CREATE LOCAL TEMPORARY TABLE temp_users ON COMMIT PRESERVE ROWS AS
-	            SELECT user_id, country_cd, gender, nationality, platform_type_name, trading_experience, title, network, bux_account_created_dts, ams_first_funded_dts
+	            SELECT user_id, platform_type_name, trading_experience, title, network, bux_account_created_dts
 	            FROM reporting.user_details
 	            WHERE bux_account_created_dts::date BETWEEN '{users_from}' AND '{users_till}'
 	            LIMIT {cohort_size} OVER (PARTITION BY date_trunc('month', bux_account_created_dts) ORDER BY RANDOMINT(1000000000));
@@ -179,6 +192,7 @@ def build_users_entity(cur, users_from, users_till, interval, cohorts, cohort_si
 	### Merge all users features
 
 	user_details = merge_users_features(user_details, users_initial_deposit_replace, cohorts, time_to_event_features)
+	print("Users entity built with", len(user_details), "users")
 	return user_details
 
 
@@ -223,6 +237,7 @@ def build_transactions_entity(cur,interval):
     """.format(interval=interval)
 
     daily_transactions = mungle_transactions(cur, query_transactions)
+    print("Transactions entity built with", len(daily_transactions), "transactions")
     return daily_transactions
 
 
@@ -246,13 +261,14 @@ def build_target_values(cur, medium_value, high_value):
         , SUM(decode(b.transaction_type, 'DIVIDEND',-amount * nvl(c.exchange_rate, 1),0))::numeric(20,2) as div
         , SUM(decode(b.transaction_type, 'FINANCING_FEE',-amount * nvl(c.exchange_rate, 1),0))::numeric(20,2) as ff
         FROM temp_users a
-        LEFT JOIN reporting.transactions b ON b.created_dts < a.bux_account_created_dts + interval '6 months' AND a.user_id = b.user_id
+        LEFT JOIN reporting.transactions b ON b.created_dts < a.bux_account_created_dts + interval '3 months' AND a.user_id = b.user_id
         LEFT JOIN reporting.exchange_rates_eur c on c.report_date = b.created_dts::date and c.currency = b.currency
         GROUP BY 1,2
 
     """
 
     labels = mungle_curv_cv(cur, query_curcv, medium_value=medium_value, high_value=high_value)
+    print("Target values built")
     return labels
 
 
@@ -262,18 +278,32 @@ def create_bux_entity_set(cohorts, user_details, daily_transactions):
 
 	entityset_name = "bux_clv"
 
-	entityset_quads = (
-	    # entity name, entity dataframe, entity index, time index
-	    ['cohorts', cohorts, 'cohort_id', None],
-	    ['users', user_details, 'user_id', 'bux_account_created_dts'],
-	    ['transactions', daily_transactions, 'transaction_id', 'date']
-	    )
+	# cohorts == list of length 1 if no data available for vix
+	if len(cohorts) > 1:
+		entityset_quads = (
+		    # entity name, entity dataframe, entity index, time index
+		    ['cohorts', cohorts, 'cohort_id', None],
+		    ['users', user_details, 'user_id', 'bux_account_created_dts'],
+		    ['transactions', daily_transactions, 'transaction_id', 'date']
+		    )
 
-	entity_relationships = (
-	    # parent entity, child entity, key
-	    ['cohorts', 'users', 'cohort_id'],
-	    ['users', 'transactions', 'user_id']
-	)
+		entity_relationships = (
+		    # parent entity, child entity, key
+		    ['cohorts', 'users', 'cohort_id'],
+		    ['users', 'transactions', 'user_id']
+		)
+	else:
+		entityset_quads = (
+		    # entity name, entity dataframe, entity index, time index
+		    ['users', user_details, 'user_id', 'bux_account_created_dts'],
+		    ['transactions', daily_transactions, 'transaction_id', 'date']
+		    )
+
+		entity_relationships = (
+		    # parent entity, child entity, key
+		    ['users', 'transactions', 'user_id']
+		)
 
 	es = utils.create_entity_set(entityset_name, entityset_quads, entity_relationships)
+	print("Entity set built")
 	return es

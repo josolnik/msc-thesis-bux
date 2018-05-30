@@ -2,6 +2,8 @@
 import numpy as np 
 import pandas as pd 
 import matplotlib.pyplot as plt
+import seaborn as sns
+sns.set_style("white")
 import os
 import featuretools as ft
 import itertools
@@ -159,6 +161,7 @@ def plot_roc_curve(y_test, y_pred):
     auc = metrics.roc_auc_score(y_test, y_pred)
     fpr, tpr, thresholds = metrics.roc_curve(y_test, y_pred)
 
+    plt.figure(figsize=(6,4))
     plt.plot(fpr, tpr)
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.0])
@@ -178,8 +181,8 @@ def plot_confusion_matrix(cm,
     Source:
     http://scikit-learn.org/stable/auto_examples/model_selection/plot_confusion_matrix.html#sphx-glr-auto-examples-model-selection-plot-confusion-matrix-py
     """
+    plt.figure(figsize=(6,4))
     plt.imshow(cm, interpolation='nearest', cmap=cmap)
-    plt.figure(figsize=(20,10))
     plt.title(title)
     plt.colorbar()
     tick_marks = np.arange(len(classes))
@@ -198,7 +201,7 @@ def plot_confusion_matrix(cm,
     plt.tight_layout()
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
-    plt.savefig("confusion_matrix.png")
+    plt.savefig("confusion_matrix.png", bbox_inches="tight")
     plt.show()
 
 
@@ -280,6 +283,105 @@ def lime_explain_n_users(model, X_train, X_test, y_train, y_test, mapper, n):
         exp.show_in_notebook(show_table=True, show_all=False)
 
 
+def show_report(model, X_test, prediction_problem_type):
+    print("REPORT: \n \n \n")
+    y_pred = utils.rf_predict(model, X_test, prediction_problem_type)
+    
+    print("Top features:\n")
+    top_features_print = pd.DataFrame([str(feature).split(":")[1].split(">")[0] for feature in top_features])
+    top_features_print.columns = ['Feature name']
+    print(top_features_print)
+    print("\n")
+    
+    if prediction_problem_type == "binary classification":
+        
+        
+        # CONFUSION MATRIX WITHOUT THRESHOLDING
+    
+#         print("Confusion matrix before thresholding (threhold = 0.5): \n")
+#         y_pred_round = y_pred.round(0)
+#         cm = confusion_matrix(y_test, y_pred_round)
+#         # title = 'Customer lifetime value prediction (Confusion matrix)'
+#         utils.plot_confusion_matrix(cm, ['Non-whale', 'Whale'], title="")
+#         print("\n")
+    
+#         # THRESHOLDING 
+#         # profit of nudge > cost of nudge significancy -> recall more important than precision
+#         # thresholding (impact of the decision)
+
+#         nudge_revenue = 15
+#         nudge_cost = 3
+
+#         max_value_threshold = utils.calculate_threshold_maximum_value(y_pred, nudge_revenue, nudge_cost)
+#         print("\n")
+
+
+#         pd.Series(y_pred_round_rf).value_counts()
+
+#         CONFUSION MATRIX AFTER THRESHOLDING
+
+#         print("Confusion matrix after thresholding (threshold = " + str(max_value_threshold) + "): \n")
+        
+#       y_pred_round = [1 if value > max_value_threshold else 0 for value in y_pred]
+        y_pred_round = [1 if value > 0.1 else 0 for value in y_pred]
+        cm = confusion_matrix(y_test, y_pred_round)
+        # title = 'Customer lifetime value prediction (Confusion matrix)'
+        utils.plot_confusion_matrix(cm, ['Non-whale', 'Whale'], title="")
+        print("\n")
+        
+        
+        # PERFORMANCE METRICS
+        
+        # AUC (with ROC curve)
+        
+        with sns.axes_style("dark"):
+            utils.plot_roc_curve(y_test, y_pred_round)
+        
+        # cross-validation accuracy
+        scores = cross_val_score(model, X, y, cv=5, scoring='accuracy')
+        print("Accuracy: %0.2f (+/- %0.2f) \n" % (scores.mean(), scores.std()))
+    
+        # cross-validation F1 score
+        scores = cross_val_score(model, X, y, cv=5, scoring='f1')
+        print("F1: %0.2f (+/- %0.2f) \n" % (scores.mean(), scores.std()))
+
+        # cross-validation Precision score
+        scores = cross_val_score(model, X, y, cv=5, scoring='precision')
+        print("Precision: %0.2f (+/- %0.2f) \n" % (scores.mean(), scores.std()))
+
+        # cross-validation Recall score
+        scores = cross_val_score(model, X, y, cv=5, scoring='recall')
+        print("Recall: %0.2f (+/- %0.2f) \n" % (scores.mean(), scores.std()))
+        
+        
+        # LIME - users with 5 highest and lowest values of the most relevant feature
+        print("Explanation of predictions of 10 users, 5 with the highest values of the most relevant feature, 5 with the lowest value of the most relevant feature: \n")
+        utils.lime_explain_n_users(model, X_train, X_test, y_train, y_test, mapper={0: 'non_whale', 1: 'whale'}, n=10)
+
+        
+    
+    elif prediction_problem_type == "multiclass classification":
+        
+        print("Confusion matrix: \n")
+        # y_pred_round = y_pred.round(0)
+        cm = confusion_matrix(y_test, y_pred)
+        # title = 'Customer lifetime value prediction (Confusion matrix)'
+        utils.plot_confusion_matrix(cm, ['Low value', 'Medium value', 'High value'], title="")
+        
+        print(metrics.classification_report(y_test, y_pred))
+        
+        # LIME - users with 5 highest and lowest values of the most relevant feature
+        print("Explanation of predictions of 10 users, 5 with the highest values of the most relevant feature, 5 with the lowest value of the most relevant feature: \n")
+        utils.lime_explain_n_users(model, X_train, X_test, y_train, y_test, mapper={0: 'low', 1: 'medium', 2: 'high'}, n=10)
+
+        
+        
+    elif prediction_problem_type == "regression":
+        scores = cross_val_score(model, X, y, cv=5, scoring='r2')
+        print("R2 score: %0.2f (+/- %0.2f) \n" % (scores.mean(), scores.std()))
+    else:
+        print("The prediction problem type not found, choose 'binary classification', 'multiclass classification' or 'regression'. ")
+
 # load the predicted values in the database
 def copy_to_database(source_df, destination_table, connection, include_index=False, truncate=False, verbose=False):
 
@@ -319,6 +421,50 @@ def stringify_date(date):
 
 # UNUSED CODE
 
+
+# import shap
+# shap_values = shap.TreeExplainer(model.predict_proba, X_train).shap_values(X_test, nsamples=100)
+# shap.force_plot(shap_values[0][0,:], X_test.iloc[0,:])
+
+
+# # use Kernel SHAP to explain test set predictions
+# explainer = shap.TreeExplainer(svm.predict_proba, X_train, link="logit")
+# shap_values = explainer.shap_values(X_test, nsamples=100)
+
+# # plot the SHAP values for the Setosa output of the first instance
+
+
+# shap.summary_plot(shap_values, X)
+
+# for name in X_train.columns:
+#     shap.dependence_plot(name, shap_values, X, display_features=X_display)
+    
+# shap_values
+
+# shap_values[1]
+
+# X,y = shap.datasets.adult()
+# X_display,y_display = shap.datasets.adult(display=True)
+
+# len(X_display), len(X)
+
+
+# shap.force_plot(shap_values[0], X.iloc[0])
+
+# shap.summary_plot(shap_values, X)
+
+# global_shap_vals = np.abs(shap_values).mean(0)[:-1]
+# inds = np.argsort(global_shap_vals)
+# y_pos = np.arange(X.shape[1])
+# # plt.barh(y_pos, global_shap_vals[inds], color="#1E88E5")
+# # plt.yticks(y_pos, X.columns[inds])
+# # plt.gca().spines['right'].set_visible(False)
+# # plt.gca().spines['top'].set_visible(False)
+# # plt.xlabel("mean SHAP value magnitude (change in log odds)")
+# # plt.gcf().set_size_inches(6, 4.5)
+# # plt.show()
+
+# shap.force_plot(shap_values[:1000,:], X_display.iloc[:1000,:])
 
 # def feature_importances_xgb(model, feature_names):
 #     feature_importance_dict = model.get_fscore()

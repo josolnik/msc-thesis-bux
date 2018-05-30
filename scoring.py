@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[7]:
+# In[10]:
 
 import sys
 import pandas as pd
@@ -10,29 +10,30 @@ import utils_bux
 import featuretools as ft
 from sklearn.externals import joblib
 
-def main(users_from, users_till):
 
+
+def main(users_from, users_till):
+    
     # ### DEFINE PIPELINE PARAMETERS
 
-    # In[8]:
+    # In[11]:
 
-    load_to_vertica = False
+    load_to_database = False
+    save_as_csv = False
 
     # the timeframe of extracted users
-    # users_from = '2016-01-01'
-    # users_till = '2016-01-07'
-    cohort_size = 1000000
+    # users_from = '2018-04-01'
+    # users_till = '2018-04-30'
+
+    # include all users in each of the cohorts
+    cohort_size = 1000000000
 
     # the timeframe of extracted behavioral data
-    interval = '6 days'
+    interval = '3 weeks'
 
     # the type of the prediction problem
     # 'regression', 'binary classification', 'multiclass classification'
-    prediction_problem_type = 'multiclass classification'
-
-    # # multiclass values
-    # medium_value = 5
-    # high_value = 50
+    prediction_problem_type = 'binary classification'
 
     print("Pipeline parameters defined")
     print("Extraction of scoring for users from", users_from, "till", users_till)
@@ -40,9 +41,8 @@ def main(users_from, users_till):
 
     # ### CONNECT TO THE DATABASE
 
-    # In[3]:
+    # In[12]:
 
-    # connect to the vertica database, create a cursor
     conn, cur = utils.connect_to_db()
 
 
@@ -50,7 +50,7 @@ def main(users_from, users_till):
 
     # #### Cohorts entity
 
-    # In[4]:
+    # In[13]:
 
     cohorts = utils_bux.build_cohorts_entity(cur=cur,
                                              users_from=users_from,
@@ -59,7 +59,7 @@ def main(users_from, users_till):
 
     # #### Users entity
 
-    # In[5]:
+    # In[14]:
 
     user_details = utils_bux.build_users_entity(cur=cur,
                                                 users_from=users_from,
@@ -71,20 +71,15 @@ def main(users_from, users_till):
 
     # #### Transactions entity
 
-    # In[6]:
+    # In[15]:
 
     daily_transactions = utils_bux.build_transactions_entity(cur=cur,
                                                              interval=interval)
 
 
-    # In[5]:
-
-    ### no need for labels
-
-
     # ### CREATE THE ENTITY SET
 
-    # In[6]:
+    # In[16]:
 
     es = utils_bux.create_bux_entity_set(cohorts, user_details, daily_transactions)
     es
@@ -92,19 +87,17 @@ def main(users_from, users_till):
 
     # ### FEATURE ENGINEERING (DFS)
 
-    # In[7]:
+    # In[17]:
 
     top_features = ft.load_features("top_features", es)
     fm = utils.calculate_feature_matrix_top_features(es, top_features)
-    X = fm.reset_index(drop=True)
-    # X = fm.reset_index().merge(labels)
-    # X.to_csv("production_features.csv")
+    X = fm.reset_index(drop=True).fillna(0)
     print("Features built:\n", list(fm.columns))
 
 
     # ### LOADING THE MODEL
 
-    # In[8]:
+    # In[18]:
 
     model = joblib.load('models/model.pkl')
     print("Model loaded")
@@ -112,49 +105,46 @@ def main(users_from, users_till):
 
     # ### SCORING
 
-    # In[18]:
+    # In[19]:
 
     y_pred = utils.rf_predict(model, X, prediction_problem_type)
     print("Prediction done")
 
 
-    # ### SAVE RESULTS AS A CSV
-
-    # In[19]:
-
-    # utils.sql_query(cur, "SELECT * FROM analytics.model_scoring_predictions LIMIT 10")
-
-
     # In[20]:
 
-    # topic_type	report_date	model_type	user_id	class_prediction	prob
+    # save predictions in a csv
     predictions = pd.DataFrame()
     predictions["user_id"] = user_details["user_id"]
     predictions["topic_type"] = "clv_prediction"
     predictions['report_date'] = pd.to_datetime('today').strftime("%Y-%m-%d")
-    predictions["model_type"] = "random_forest"
+    predictions["model_type"] = "randomforest"
     predictions["class_prediction"] = y_pred
     predictions["prob"] = 0
     predictions = predictions[["topic_type", "report_date", "model_type", "user_id", "class_prediction", "prob"]]
     predictions.head()
 
-# In[37]:
 
-    predictions.to_csv("scoring/clv_prediction_" + users_from + "-" + users_till + ".csv", index=False)
+    # ### SAVE AS CSV AND/OR LOAD RESULTS INTO THE THE DATABASE
 
+    # In[21]:
 
-# ### LOAD RESULTS INTO VERTICA
-
-# In[ ]:
-
-# print("Scoring loaded to vertica")
+    if save_as_csv:
+        predictions.to_csv("scoring/results" + users_from + "-" + users_till, index=False)
 
 
-# In[ ]:
+    # In[22]:
+
+    if load_to_database:
+        utils_bux.copy_to_database(predictions, 'db_table_name', conn)
+
+
+    # In[ ]:
 
 # when running as a script
 if __name__ == "__main__":
     users_from = sys.argv[1]
     users_till = sys.argv[2]
+    # embed all the code above in the main function
     main(users_from, users_till)
 

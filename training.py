@@ -30,12 +30,12 @@ def main(users_from, users_till):
 
     # the timeframe of extracted users
 
-    starting_date = '2016-01-01'
+    # starting_date = '2016-01-01'
 
-    users_till = stringify(pd.to_datetime(starting_date) - relativedelta(days=1)) 
-    users_from = stringify(pd.to_datetime(starting_date) + relativedelta(months=-12))
+    # users_till = stringify(pd.to_datetime(starting_date) - relativedelta(days=1)) 
+    # users_from = stringify(pd.to_datetime(starting_date) + relativedelta(months=-12))
 
-    cohort_size = 2000
+    cohort_size = 3000
 
     # the timeframe of extracted behavioral data
     interval = '6 days'
@@ -172,11 +172,11 @@ def main(users_from, users_till):
     agg_primitives = [Sum, Std, Max, Min, Mean, Count, PercentTrue, NUnique]
 
 
-    fm_encoded, features_encoded = utils.calculate_feature_matrix_unparallel(es,
-                                                                             "users",
-                                                                             trans_primitives=trans_primitives,
-                                                                             agg_primitives=agg_primitives,
-                                                                             max_depth=2)
+    fm_encoded, features_encoded = utils.calculate_feature_matrix(es,
+                                                                 "users",
+                                                                 trans_primitives=trans_primitives,
+                                                                 agg_primitives=agg_primitives,
+                                                                 max_depth=2)
     X = fm_encoded.reset_index().merge(labels)
 
 
@@ -187,11 +187,11 @@ def main(users_from, users_till):
     # define the labels based on the prediction problem type
     X, y = utils.make_labels(X, prediction_problem_type)
     # split the data into training and testing
-    X_train, X_test, y_train, y_test = utils.train_test_splitting(X, y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+    
     # fit the model
-    model = utils.xgboost_train(X_train, y_train, prediction_problem_type)
+    model = utils.rf_train(X_train, y_train, prediction_problem_type)
     # predict on the testing set
-    # y_pred = utils.xgboost_predict(model, X_test, prediction_problem_type)
     # extract the most important features
     top_features = utils.feature_importances(model, features_encoded, n=number_of_features)
     # save the top features
@@ -217,7 +217,7 @@ def main(users_from, users_till):
     # split the data into training and testing
     X_train, X_test, y_train, y_test = utils.train_test_splitting(X, y)
     # fit the model
-    model = utils.xgboost_train(X_train, y_train, prediction_problem_type)
+    model = utils.rf_train(X_train, y_train, prediction_problem_type)
     print("Model trained on top features")
 
 

@@ -114,12 +114,7 @@ def main(users_from, users_till):
 
     # In[18]:
 
-    # X = fm.reset_index().merge(labels)
-    # X, y = utils.make_labels(X, prediction_problem_type)
-    # X_train, X_test, y_train, y_test = utils.train_test_splitting(X, y)
-    # model = utils.xgboost_train(X_train, y_train, prediction_problem_type)
-    # y_pred = utils.xgboost_predict(model, X_test, prediction_problem_type)
-    y_pred = utils.xgboost_predict(model, X, prediction_problem_type)
+    y_pred = utils.rf_predict(model, X, prediction_problem_type)
     print("Prediction done")
 
 
@@ -137,7 +132,7 @@ def main(users_from, users_till):
     predictions["user_id"] = user_details["user_id"]
     predictions["topic_type"] = "clv_prediction"
     predictions['report_date'] = pd.to_datetime('today').strftime("%Y-%m-%d")
-    predictions["model_type"] = "xgboost"
+    predictions["model_type"] = "random_forest"
     predictions["class_prediction"] = y_pred
     predictions["prob"] = 0
     predictions = predictions[["topic_type", "report_date", "model_type", "user_id", "class_prediction", "prob"]]

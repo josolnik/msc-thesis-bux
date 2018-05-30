@@ -71,7 +71,8 @@ def build_time_to_features(cur, time_to_event_query):
     
     continuous_features = pd.pivot_table(time_to_event, values="hours_till_event", index="user_id", columns="event_name").reset_index()
     continuous_features.columns = ["user_id"] + [column + "_hours_till_event" for column in continuous_features.columns[1:]]
-    continuous_features.fillna(500, inplace=True)
+    # replace the features that weren't completed by a user with a high value
+    # continuous_features.fillna(500, inplace=True)
 
     time_to_event_df = pd.merge(binary_features, continuous_features, on='user_id')
     
@@ -82,7 +83,7 @@ def merge_users_features(user_details, users_initial_deposit_replace, cohorts, t
     # merge initial deposit feature
     user_details = pd.merge(user_details, users_initial_deposit_replace, how='left', on='user_id')
     # user_details['initial_deposit_amount_lim'].fillna(0,inplace=True)
-    # user_details['days_to_initial_deposit'].fillna(10000, inplace=True)	
+    # user_details['days_to_initial_deposit'].fillna(10000, inplace=True)
     
     # merge cohort data
     if len(cohorts) > 1:
@@ -200,7 +201,6 @@ def build_users_entity(cur, users_from, users_till, interval, cohorts, cohort_si
 
 def mungle_transactions(cur, query_transactions):
     daily_transactions = utils.sql_query(cur, query_transactions)
-    # print("Number of transaction rows:", str(len(daily_transactions)) + ", Number of unique users: " + str(len(daily_transactions['user_id'].unique())))
     daily_transactions['date'] = pd.to_datetime(daily_transactions['date'])
     daily_transactions.reset_index(inplace=True,drop=True)
     daily_transactions.reset_index(inplace=True)
@@ -261,7 +261,7 @@ def build_target_values(cur, medium_value, high_value):
         , SUM(decode(b.transaction_type, 'DIVIDEND',-amount * nvl(c.exchange_rate, 1),0))::numeric(20,2) as div
         , SUM(decode(b.transaction_type, 'FINANCING_FEE',-amount * nvl(c.exchange_rate, 1),0))::numeric(20,2) as ff
         FROM temp_users a
-        LEFT JOIN reporting.transactions b ON b.created_dts < a.bux_account_created_dts + interval '3 months' AND a.user_id = b.user_id
+        LEFT JOIN reporting.transactions b ON b.created_dts < a.bux_account_created_dts + interval '6 months' AND a.user_id = b.user_id
         LEFT JOIN reporting.exchange_rates_eur c on c.report_date = b.created_dts::date and c.currency = b.currency
         GROUP BY 1,2
 
@@ -274,6 +274,7 @@ def build_target_values(cur, medium_value, high_value):
 
 
 ### CREATE ENTITY SET
+
 def create_bux_entity_set(cohorts, user_details, daily_transactions):
 
 	entityset_name = "bux_clv"

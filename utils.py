@@ -1,51 +1,20 @@
-# ignore the deprecation warnings for XGBOOST
-
-import warnings
-
-def fxn():
-    warnings.warn("deprecated", DeprecationWarning)
-
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    fxn()
-
-
+# importing the dependencies
 import numpy as np 
 import pandas as pd 
 import matplotlib.pyplot as plt
 import os
 import featuretools as ft
 import itertools
-
-# training a classifier / booster
-import xgboost as xgb
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-# from sklearn.ensemble import RandomForestClassifier
-# from sklearn.metrics import f1_score
 from sklearn.metrics import confusion_matrix
-# from sklearn.model_selection import cross_val_score
 from sklearn.metrics import precision_recall_fscore_support as score
 from sklearn import metrics
-
-
-
-from featuretools.primitives import (Sum, Std, Max, Min, Mean,
-                                 Count, PercentTrue, NUnique, 
-                                 Day, Week, Month, Weekday, Weekend)
-
-
-trans_primitives = [Day, Week, Month, Weekday, Weekend]
-agg_primitives = [Sum, Std, Max, Min, Mean, Count, PercentTrue, NUnique]
-
-
-
-
-
-
-# extraction of entities
-
+import lime
+import lime.lime_tabular
 import vertica_python
 import configparser
+
 
 def connect_to_db():
     config = configparser.ConfigParser()
@@ -80,30 +49,24 @@ def create_entity_set(entityset_name, entityset_quads, entity_relationships):
                         index=es_quad[2],
                         time_index=es_quad[3])
     
-    
+    # if cohorts entity is included
     if len(entityset_quads) > 2:
         for rel in entity_relationships:
             es.add_relationship(ft.Relationship(es[rel[0]][rel[2]], es[rel[1]][rel[2]]))
+    # if cohorts entity is not included
     elif len(entityset_quads) == 2:
         er = entity_relationships
         es.add_relationship(ft.Relationship(es[er[0]][er[2]], es[er[1]][er[2]]))
     return es
 
-# interesting values -> in transactions entity
-# es['users']['trading_segment'].interesting_values = ['ICC Trader', 'Crypto Trader']
-# example 1: "COUNT(sessions WHERE device = tablet)"
-# example 2: "AVG_TIME_BETWEEN(sessions.session_start WHERE device = tablet)"
-
-
-def calculate_feature_matrix_unparallel(es, target_entity, trans_primitives, agg_primitives, max_depth):
+# for training and scoring on all features
+def calculate_feature_matrix(es, target_entity, trans_primitives, agg_primitives, max_depth):
     
     feature_matrix, features = ft.dfs(
     entityset=es,
     target_entity=target_entity,
     trans_primitives=trans_primitives,
     agg_primitives=agg_primitives,
-    # variable_types=variable_types,
-    #  where_primitives=["count", "avg_time_between"],
     max_depth=max_depth,
     verbose=True
     )
@@ -116,46 +79,12 @@ def calculate_feature_matrix_unparallel(es, target_entity, trans_primitives, agg
     return fm_encoded, features_encoded
 
 
-
-# PARALLELIZED PIPELINE
-
-def load_entity_set(data_dir):
-
-
-    # cohorts entity
-    cohorts = pd.read_csv(os.path.join(data_dir, "cohorts.csv"))
-
-    # users entity
-    user_details = pd.read_csv(os.path.join(data_dir, "user_details.csv"))
-    user_details['bux_account_created_dts'] = pd.to_datetime(user_details['bux_account_created_dts'])
-
-    # transactions entity
-    daily_transactions = pd.read_csv(os.path.join(data_dir, "daily_transactions.csv"))
-    
-    entityset_name = "bux_clv"
-
-    entityset_quads = (
-        # entity name, entity dataframe, entity index, time index
-        ['cohorts', cohorts, 'cohort_id', None],
-        ['users', user_details, 'user_id', 'bux_account_created_dts'],
-        ['transactions', daily_transactions, 'transaction_id', 'date']
-        )
-
-    entity_relationships = (
-        # parent entity, child entity, key
-        ['cohorts', 'users', 'cohort_id'],
-        ['users', 'transactions', 'user_id']
-    )
-
-    es = create_entity_set(entityset_name, entityset_quads, entity_relationships)
- 
-    return es
-
+# for training and scoring on the most relevant features
 def calculate_feature_matrix_top_features(es, features):
-    # label_times, es = labels
+
     fm = ft.calculate_feature_matrix(features,
                                      entityset=es,
-                                     # cutoff_time_in_index=False,
+                                     cutoff_time_in_index=False,
                                      verbose=False)
 
 
@@ -164,13 +93,15 @@ def calculate_feature_matrix_top_features(es, features):
 
     return fm
 
+# create labels based on the prediction problem type
+# (conditional on having all values available, otherwise a change is needed)
 def make_labels(X, prediction_problem_type, file_path=None):
     
     if file_path != None:
         labels = pd.read_csv(file_path)
         X = X.reset_index().merge(labels)
         
-    # change the labels based on the prediction problem type
+    # change the labels based on the prediction problem typef
     # reg_label binaryclass_label   multiclass_label
     if prediction_problem_type == 'binary classification':
         X.drop(['user_id', 'reg_label', 'multiclass_label'], axis=1, inplace=True)
@@ -195,25 +126,21 @@ def make_labels(X, prediction_problem_type, file_path=None):
 
     return X, y
 
-def train_test_splitting(X, y, test_size=0.3):
-    
-    X_train, X_test, y_train, y_test = train_test_split(X,
-                                        y,
-                                        test_size=test_size)
-    
-    return X_train, X_test, y_train, y_test
-
-def xgboost_train(X_train, y_train, prediction_problem_type):
+# training the algorithm based on the prediction problem type
+def rf_train(X_train, y_train, prediction_problem_type):
     if (prediction_problem_type == "binary classification") or (prediction_problem_type == "multiclass classification"):
-        model = xgb.XGBClassifier(max_depth=3, n_estimators=300, learning_rate=0.05).fit(X_train, y_train)
+        model = RandomForestClassifier(n_estimators=50, oob_score=True).fit(X_train, y_train)
+        # model = xgb.XGBClassifier(max_depth=3, n_estimators=300, learning_rate=0.05).fit(X_train, y_train)
         return model
     elif prediction_problem_type == "regression":
-        model = xgb.XGBRegressor(max_depth=3, n_estimators=300, learning_rate=0.05).fit(X_train, y_train)
+        model = RandomForestRegressor(n_estimators=50, oob_score=True).fit(X_train, y_train)
+        # model = xgb.XGBRegressor(max_depth=3, n_estimators=300, learning_rate=0.05).fit(X_train, y_train)
         return model
     else:
         return "The prediction problem type not found, choose 'classification' or 'regression'"
 
-def xgboost_predict(model, X_test, prediction_problem_type):
+# predicting on the testing set based on the prediction problem type
+def rf_predict(model, X_test, prediction_problem_type):
     if prediction_problem_type == "binary classification":
         y_pred = model.predict_proba(X_test)
         y_pred = pd.Series([value[1] for value in y_pred])
@@ -227,7 +154,6 @@ def xgboost_predict(model, X_test, prediction_problem_type):
     return y_pred
 
 # REPORT
-
 
 def plot_roc_curve(y_test, y_pred):
     auc = metrics.roc_auc_score(y_test, y_pred)
@@ -253,6 +179,7 @@ def plot_confusion_matrix(cm,
     http://scikit-learn.org/stable/auto_examples/model_selection/plot_confusion_matrix.html#sphx-glr-auto-examples-model-selection-plot-confusion-matrix-py
     """
     plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.figure(figsize=(20,10))
     plt.title(title)
     plt.colorbar()
     tick_marks = np.arange(len(classes))
@@ -271,8 +198,43 @@ def plot_confusion_matrix(cm,
     plt.tight_layout()
     plt.ylabel('True Label')
     plt.xlabel('Predicted Label')
+    plt.savefig("confusion_matrix.png")
+    plt.show()
 
 
+
+def calculate_threshold_maximum_value(y_pred, nudge_revenue, nudge_cost):
+    # TP-> nudging spends 15 euros extra for 5 euros, profit = 5
+    # FP -> nudging the user does nothing for 5 euros, profit = -5
+    # TN -> not nudging a non-whale -> profit = 0
+    # FN -> not nudging a whale they don't spend anything extra, profit = -10
+    # not classifying a non-whale
+
+
+    thresholds = [i/10 for i in range(1,10)]
+
+    tp_value = nudge_revenue - nudge_cost
+    fp_value = - nudge_cost
+    tn_value = 0
+    fn_value = - tp_value
+
+    tp_value, fp_value, tn_value, fn_value
+
+    max_value = {'threshold': 0, 'value':0}
+
+    for cur_threshold in thresholds:
+        y_pred_round_rf = [1 if value > cur_threshold else 0 for value in y_pred]
+        cm = confusion_matrix(y_test, y_pred_round_rf)
+        value = (cm[0][0] * tn_value) + (cm[0][1] * fp_value) + (cm[1][0] * fn_value) + (cm[1][1] * tp_value)
+        if value > max_value['value']:
+            max_value['threshold'] = cur_threshold
+            max_value['value'] = value
+
+    print("Maximum value: " + str(max_value['value']) + ", threshold: " + str(max_value['threshold']))
+    return max_value['threshold']
+
+
+# calculate precision, recall, fscore and support
 def evaluate_performance(y_pred, y_test):
 
     precision, recall, fscore, support = score(y_test, y_pred)
@@ -294,22 +256,116 @@ def feature_importances(model, features, n=10):
 
     return([f[0] for f in zipped[:n]])
 
-def feature_importances_xgb(model, feature_names):
-    feature_importance_dict = model.get_fscore()
-    fs = ['f%i' % i for i in range(len(feature_names))]
-    f1 = pd.DataFrame({'f': list(feature_importance_dict.keys()),
-                       'importance': list(feature_importance_dict.values())})
-    f2 = pd.DataFrame({'f': fs, 'feature_name': feature_names})
-    feature_importance = pd.merge(f1, f2, how='right', on='f')
-    feature_importance = feature_importance.fillna(0)
-    return feature_importance[['feature_name', 'importance']].sort_values(by='importance',
-                                                                          ascending=False)
+
+def lime_explain_n_users(model, X_train, X_test, y_train, y_test, mapper, n):
+    explainer = lime.lime_tabular.LimeTabularExplainer(X_train.values,
+                                                   feature_names=X_train.columns.values,
+                                                   class_names=y_train.map(mapper).unique(),
+                                                   discretize_continuous=True)
+    
+    slice = int(n / 2)
+    
+    feature_name = X_test.columns[0]
+    low_value_ids = list(pd.DataFrame(X_test[feature_name].sort_values(ascending=False)[0:slice]).reset_index()['index'])
+    high_value_ids = list(pd.DataFrame(X_test[feature_name].sort_values(ascending=False)[0:slice]).reset_index()['index'])
+
+    high_df = X_test.reset_index()[(X_test.reset_index()['index'].isin(high_value_ids))].drop('index', axis=1).reset_index(drop=True)
+    low_df = X_test.reset_index()[(X_test.reset_index()['index'].isin(low_value_ids))].drop('index', axis=1).reset_index(drop=True)
+
+    df = high_df.append(low_df)
 
 
+    for index, row in df.iterrows():
+        exp = explainer.explain_instance(row, model.predict_proba, num_features=5, top_labels=1)
+        exp.show_in_notebook(show_table=True, show_all=False)
+
+
+# load the predicted values in the database
+def copy_to_database(source_df, destination_table, connection, include_index=False, truncate=False, verbose=False):
+
+    if truncate == True:
+        print("Truncating table " + destination_table)
+        cur = connection.cursor()
+        cur.execute("truncate table " + destination_table)
+
+    columns = list(source_df)
+        
+    if include_index == True:
+        columns.insert(0, source_df.index.name)
+    
+    columns = " " + str(tuple(source_df)).replace("'","")
+        
+    tmp_file = tempfile.NamedTemporaryFile()
+    source_df.to_csv(tmp_file.name, sep = ',', index = include_index)
+    cur = connection.cursor()
+    sql = "copy " + destination_table + columns + " from stdin delimiter ',' skip 1"
+    
+    if verbose == True:
+        print(sql)
+    
+    with open(tmp_file.name, "rb") as fs:
+        cur.copy(sql, fs)
+        connection.commit()
+    tmp_file.close()
+    
+    return str(len(source_df)) + ' row(s) written to table ' + destination_table
+
+
+# convert a timestamp into a string to run a window function on
+def stringify_date(date):
+    return str(date)[0:10]
 
 #####################################################################################
 
 # UNUSED CODE
+
+
+# def feature_importances_xgb(model, feature_names):
+#     feature_importance_dict = model.get_fscore()
+#     fs = ['f%i' % i for i in range(len(feature_names))]
+#     f1 = pd.DataFrame({'f': list(feature_importance_dict.keys()),
+#                        'importance': list(feature_importance_dict.values())})
+#     f2 = pd.DataFrame({'f': fs, 'feature_name': feature_names})
+#     feature_importance = pd.merge(f1, f2, how='right', on='f')
+#     feature_importance = feature_importance.fillna(0)
+#     return feature_importance[['feature_name', 'importance']].sort_values(by='importance',
+#                                                                           ascending=False)
+
+
+# PARALLELIZED PIPELINE
+
+# def load_entity_set(data_dir):
+
+
+#     # cohorts entity
+#     cohorts = pd.read_csv(os.path.join(data_dir, "cohorts.csv"))
+
+#     # users entity
+#     user_details = pd.read_csv(os.path.join(data_dir, "user_details.csv"))
+#     user_details['bux_account_created_dts'] = pd.to_datetime(user_details['bux_account_created_dts'])
+
+#     # transactions entity
+#     daily_transactions = pd.read_csv(os.path.join(data_dir, "daily_transactions.csv"))
+    
+#     entityset_name = "bux_clv"
+
+#     entityset_quads = (
+#         # entity name, entity dataframe, entity index, time index
+#         ['cohorts', cohorts, 'cohort_id', None],
+#         ['users', user_details, 'user_id', 'bux_account_created_dts'],
+#         ['transactions', daily_transactions, 'transaction_id', 'date']
+#         )
+
+#     entity_relationships = (
+#         # parent entity, child entity, key
+#         ['cohorts', 'users', 'cohort_id'],
+#         ['users', 'transactions', 'user_id']
+#     )
+
+#     es = create_entity_set(entityset_name, entityset_quads, entity_relationships)
+ 
+#     return es
+
 
 
 

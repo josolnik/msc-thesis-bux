@@ -14,25 +14,19 @@ def train(users_from_train, users_till_train):
 # execute the scoring script
 def score(users_from_score, users_till_score):
 	os.system("time python scoring.py" + " '" + users_from_score + "' '" + users_till_score + "'")
-	# os.system("time python scoring_number_users.py" + " '" + users_from_score + "' '" + users_till_score + "'")
-
-
-# convert the timestamp into a string
-def stringify(date):
-	return str(date)[0:10]
 
 
 # define the starting date of training and scoring
-starting_date = '2016-01-01'
+starting_date = '2018-05-01'
 
 # first iteration
-users_till_train = pd.to_datetime(starting_date) - relativedelta(days=1)
-users_from_train = users_till_train + relativedelta(months=-12) + relativedelta(months=-6)
+users_till_train = pd.to_datetime(starting_date) + relativedelta(months=-6) + relativedelta(days=-1)# added 6 months for the lag
+users_from_train = users_till_train + relativedelta(months=-12)
 print("Training on from: " + stringify(users_from_train) + " to " + stringify(users_till_train))
-train(stringify(users_from_train), stringify(users_till_train))
+# train(stringify(users_from_train), stringify(users_till_train))
 
-users_from_score = users_till_train + relativedelta(days=+1)
-users_till_score = users_from_score + relativedelta(months=1) - relativedelta(days=1)
+users_from_score = users_till_train + relativedelta(days=+1) + relativedelta(months=6) # added for the lag	
+users_till_score = users_from_score + MonthEnd(1)
 print("Scoring from: " + stringify(users_from_score) + " to " + stringify(users_till_score))
 score(stringify(users_from_score), stringify(users_till_score))
 
@@ -40,7 +34,7 @@ score(stringify(users_from_score), stringify(users_till_score))
 last_full_month = pd.to_datetime((pd.Timestamp.now() - pd.offsets.MonthBegin(1)).strftime('%Y-%m-%d')) - relativedelta(months=1)
 
 
-# 2nd to end iteration
+# 2nd to final iteration
 while users_from_score <= last_full_month:
 	users_till_train = users_till_train + MonthEnd(1)
 	users_from_train = users_from_train + relativedelta(months=1)
@@ -49,8 +43,8 @@ while users_from_score <= last_full_month:
 	users_till_score = users_till_score + MonthEnd(1)
 
 	# train, save the model, save the features
-	# print("Training on from: " + stringify(users_from_train) + " to " + stringify(users_till_train))
-	# train(stringify(users_from_train), stringify(users_till_train))
+	print("Training on from: " + stringify(users_from_train) + " to " + stringify(users_till_train))
+	train(stringify(users_from_train), stringify(users_till_train))
 
 	# score on the saved model and features, save scores in a csv
 	print("Scoring from:" + stringify(users_from_score) + " to " + stringify(users_till_score))

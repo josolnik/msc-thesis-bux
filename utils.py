@@ -412,11 +412,6 @@ def copy_to_database(source_df, destination_table, connection, include_index=Fal
     
     return str(len(source_df)) + ' row(s) written to table ' + destination_table
 
-
-# convert a timestamp into a string to run a window function on
-def stringify_date(date):
-    return str(date)[0:10]
-
 #####################################################################################
 
 # UNUSED CODE

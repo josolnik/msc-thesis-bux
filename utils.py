@@ -103,7 +103,7 @@ def make_labels(X, prediction_problem_type, file_path=None):
         labels = pd.read_csv(file_path)
         X = X.reset_index().merge(labels)
         
-    # change the labels based on the prediction problem typef
+    # change the labels based on the prediction problem type
     # reg_label binaryclass_label   multiclass_label
     if prediction_problem_type == 'binary classification':
         X.drop(['user_id', 'reg_label', 'multiclass_label'], axis=1, inplace=True)
@@ -206,12 +206,11 @@ def plot_confusion_matrix(cm,
 
 
 
-def calculate_threshold_maximum_value(y_pred, nudge_revenue, nudge_cost):
-    # TP-> nudging spends 15 euros extra for 5 euros, profit = 5
-    # FP -> nudging the user does nothing for 5 euros, profit = -5
-    # TN -> not nudging a non-whale -> profit = 0
-    # FN -> not nudging a whale they don't spend anything extra, profit = -10
-    # not classifying a non-whale
+def calculate_threshold_maximum_value(y_pred, y_test, nudge_revenue, nudge_cost):
+    # TP-> by nudging a whale spends 25 euros extra for 5 euros, profit = 20
+    # FP -> by nudging a non-whale who does nothing for 5 euros, profit = -5
+    # TN -> by not nudging a non-whale nothing happens -> profit = 0
+    # FN -> by not nudging a whale they don't spend anything extra, profit = -20 (opportunity cost)
 
 
     thresholds = [i/10 for i in range(1,10)]
@@ -238,7 +237,7 @@ def calculate_threshold_maximum_value(y_pred, nudge_revenue, nudge_cost):
 
 
 # calculate precision, recall, fscore and support
-def evaluate_performance(y_pred, y_test):
+def evaluate_binary_classification_performance(y_pred, y_test):
 
     precision, recall, fscore, support = score(y_test, y_pred)
 
@@ -285,7 +284,7 @@ def lime_explain_n_users(model, X_train, X_test, y_train, y_test, mapper, n):
 
 def show_report(model, X_test, prediction_problem_type):
     print("REPORT: \n \n \n")
-    y_pred = utils.rf_predict(model, X_test, prediction_problem_type)
+    y_pred = rf_predict(model, X_test, prediction_problem_type)
     
     print("Top features:\n")
     top_features_print = pd.DataFrame([str(feature).split(":")[1].split(">")[0] for feature in top_features])
@@ -298,35 +297,31 @@ def show_report(model, X_test, prediction_problem_type):
         
         # CONFUSION MATRIX WITHOUT THRESHOLDING
     
-#         print("Confusion matrix before thresholding (threhold = 0.5): \n")
-#         y_pred_round = y_pred.round(0)
-#         cm = confusion_matrix(y_test, y_pred_round)
-#         # title = 'Customer lifetime value prediction (Confusion matrix)'
-#         utils.plot_confusion_matrix(cm, ['Non-whale', 'Whale'], title="")
-#         print("\n")
-    
-#         # THRESHOLDING 
-#         # profit of nudge > cost of nudge significancy -> recall more important than precision
-#         # thresholding (impact of the decision)
-
-#         nudge_revenue = 15
-#         nudge_cost = 3
-
-#         max_value_threshold = utils.calculate_threshold_maximum_value(y_pred, nudge_revenue, nudge_cost)
-#         print("\n")
-
-
-#         pd.Series(y_pred_round_rf).value_counts()
-
-#         CONFUSION MATRIX AFTER THRESHOLDING
-
-#         print("Confusion matrix after thresholding (threshold = " + str(max_value_threshold) + "): \n")
-        
-#       y_pred_round = [1 if value > max_value_threshold else 0 for value in y_pred]
-        y_pred_round = [1 if value > 0.1 else 0 for value in y_pred]
+        print("Confusion matrix before thresholding (threhold = 0.5): \n")
+        y_pred_round = y_pred.round(0)
         cm = confusion_matrix(y_test, y_pred_round)
         # title = 'Customer lifetime value prediction (Confusion matrix)'
-        utils.plot_confusion_matrix(cm, ['Non-whale', 'Whale'], title="")
+        plot_confusion_matrix(cm, ['Non-whale', 'Whale'], title="")
+        print("\n")
+
+        # THRESHOLDING 
+        # profit of nudge >> cost of nudge -> recall more important than precision
+        # thresholding (impact of the decision)
+
+        nudge_revenue = 25
+        nudge_cost = 5
+
+        max_value_threshold = calculate_threshold_maximum_value(y_pred, y_test, nudge_revenue, nudge_cost)
+        print("\n")
+
+        # CONFUSION MATRIX AFTER THRESHOLDING
+
+        print("Confusion matrix after thresholding (threshold = " + str(max_value_threshold) + "): \n")
+        y_pred_round = [1 if value > max_value_threshold else 0 for value in y_pred]
+
+        cm = confusion_matrix(y_test, y_pred_round)
+        # title = 'Customer lifetime value prediction (Confusion matrix)'
+        plot_confusion_matrix(cm, ['Non-whale', 'Whale'], title="")
         print("\n")
         
         
@@ -335,7 +330,7 @@ def show_report(model, X_test, prediction_problem_type):
         # AUC (with ROC curve)
         
         with sns.axes_style("dark"):
-            utils.plot_roc_curve(y_test, y_pred_round)
+            plot_roc_curve(y_test, y_pred_round)
         
         # cross-validation accuracy
         scores = cross_val_score(model, X, y, cv=5, scoring='accuracy')
@@ -356,7 +351,7 @@ def show_report(model, X_test, prediction_problem_type):
         
         # LIME - users with 5 highest and lowest values of the most relevant feature
         print("Explanation of predictions of 10 users, 5 with the highest values of the most relevant feature, 5 with the lowest value of the most relevant feature: \n")
-        utils.lime_explain_n_users(model, X_train, X_test, y_train, y_test, mapper={0: 'non_whale', 1: 'whale'}, n=10)
+        lime_explain_n_users(model, X_train, X_test, y_train, y_test, mapper={0: 'non_whale', 1: 'whale'}, n=10)
 
         
     
@@ -366,19 +361,22 @@ def show_report(model, X_test, prediction_problem_type):
         # y_pred_round = y_pred.round(0)
         cm = confusion_matrix(y_test, y_pred)
         # title = 'Customer lifetime value prediction (Confusion matrix)'
-        utils.plot_confusion_matrix(cm, ['Low value', 'Medium value', 'High value'], title="")
+        plot_confusion_matrix(cm, ['Low value', 'Medium value', 'High value'], title="")
         
         print(metrics.classification_report(y_test, y_pred))
         
         # LIME - users with 5 highest and lowest values of the most relevant feature
         print("Explanation of predictions of 10 users, 5 with the highest values of the most relevant feature, 5 with the lowest value of the most relevant feature: \n")
-        utils.lime_explain_n_users(model, X_train, X_test, y_train, y_test, mapper={0: 'low', 1: 'medium', 2: 'high'}, n=10)
+        lime_explain_n_users(model, X_train, X_test, y_train, y_test, mapper={0: 'low', 1: 'medium', 2: 'high'}, n=10)
 
         
         
     elif prediction_problem_type == "regression":
         scores = cross_val_score(model, X, y, cv=5, scoring='r2')
         print("R2 score: %0.2f (+/- %0.2f) \n" % (scores.mean(), scores.std()))
+        scores = cross_val_score(model, X, y, cv=5, scoring='rmse')
+        print("RMSE score: %0.2f (+/- %0.2f) \n" % (scores.mean(), scores.std()))
+
     else:
         print("The prediction problem type not found, choose 'binary classification', 'multiclass classification' or 'regression'. ")
 
@@ -411,353 +409,3 @@ def copy_to_database(source_df, destination_table, connection, include_index=Fal
     tmp_file.close()
     
     return str(len(source_df)) + ' row(s) written to table ' + destination_table
-
-#####################################################################################
-
-# UNUSED CODE
-
-
-# import shap
-# shap_values = shap.TreeExplainer(model.predict_proba, X_train).shap_values(X_test, nsamples=100)
-# shap.force_plot(shap_values[0][0,:], X_test.iloc[0,:])
-
-
-# # use Kernel SHAP to explain test set predictions
-# explainer = shap.TreeExplainer(svm.predict_proba, X_train, link="logit")
-# shap_values = explainer.shap_values(X_test, nsamples=100)
-
-# # plot the SHAP values for the Setosa output of the first instance
-
-
-# shap.summary_plot(shap_values, X)
-
-# for name in X_train.columns:
-#     shap.dependence_plot(name, shap_values, X, display_features=X_display)
-    
-# shap_values
-
-# shap_values[1]
-
-# X,y = shap.datasets.adult()
-# X_display,y_display = shap.datasets.adult(display=True)
-
-# len(X_display), len(X)
-
-
-# shap.force_plot(shap_values[0], X.iloc[0])
-
-# shap.summary_plot(shap_values, X)
-
-# global_shap_vals = np.abs(shap_values).mean(0)[:-1]
-# inds = np.argsort(global_shap_vals)
-# y_pos = np.arange(X.shape[1])
-# # plt.barh(y_pos, global_shap_vals[inds], color="#1E88E5")
-# # plt.yticks(y_pos, X.columns[inds])
-# # plt.gca().spines['right'].set_visible(False)
-# # plt.gca().spines['top'].set_visible(False)
-# # plt.xlabel("mean SHAP value magnitude (change in log odds)")
-# # plt.gcf().set_size_inches(6, 4.5)
-# # plt.show()
-
-# shap.force_plot(shap_values[:1000,:], X_display.iloc[:1000,:])
-
-# def feature_importances_xgb(model, feature_names):
-#     feature_importance_dict = model.get_fscore()
-#     fs = ['f%i' % i for i in range(len(feature_names))]
-#     f1 = pd.DataFrame({'f': list(feature_importance_dict.keys()),
-#                        'importance': list(feature_importance_dict.values())})
-#     f2 = pd.DataFrame({'f': fs, 'feature_name': feature_names})
-#     feature_importance = pd.merge(f1, f2, how='right', on='f')
-#     feature_importance = feature_importance.fillna(0)
-#     return feature_importance[['feature_name', 'importance']].sort_values(by='importance',
-#                                                                           ascending=False)
-
-
-# PARALLELIZED PIPELINE
-
-# def load_entity_set(data_dir):
-
-
-#     # cohorts entity
-#     cohorts = pd.read_csv(os.path.join(data_dir, "cohorts.csv"))
-
-#     # users entity
-#     user_details = pd.read_csv(os.path.join(data_dir, "user_details.csv"))
-#     user_details['bux_account_created_dts'] = pd.to_datetime(user_details['bux_account_created_dts'])
-
-#     # transactions entity
-#     daily_transactions = pd.read_csv(os.path.join(data_dir, "daily_transactions.csv"))
-    
-#     entityset_name = "bux_clv"
-
-#     entityset_quads = (
-#         # entity name, entity dataframe, entity index, time index
-#         ['cohorts', cohorts, 'cohort_id', None],
-#         ['users', user_details, 'user_id', 'bux_account_created_dts'],
-#         ['transactions', daily_transactions, 'transaction_id', 'date']
-#         )
-
-#     entity_relationships = (
-#         # parent entity, child entity, key
-#         ['cohorts', 'users', 'cohort_id'],
-#         ['users', 'transactions', 'user_id']
-#     )
-
-#     es = create_entity_set(entityset_name, entityset_quads, entity_relationships)
- 
-#     return es
-
-
-
-
-
-# def load_entity_set(data_dir):
-
-
-#     # users entity
-#     user_details = pd.read_csv(os.path.join(data_dir, "user_details.csv"))
-#     user_details['bux_account_created_dts'] = pd.to_datetime(user_details['bux_account_created_dts'])
-#     user_details['month_year'] = user_details['bux_account_created_dts'].apply(lambda x: x.strftime('%B-%Y'))
-
-#     # cohort_limit_df = calculate_cohort_limit(user_details, sample_user_ratio)
-
-#     # user_details_temp = pd.DataFrame()
-#     # for month_year in cohort_limit_df["month_year"]:
-#     #     user_details_temp = user_details_temp.append(limit_users(cohort_limit_df, user_details, month_year))
-
-#     # user_details = user_details_temp
-
-#     # transactions entity
-#     daily_transactions = pd.read_csv(os.path.join(data_dir, "daily_transactions.csv"))
-#     daily_transactions['date'] = pd.to_datetime(daily_transactions['date'])
-#     daily_transactions = daily_transactions[daily_transactions.columns[1:]]
-#     daily_transactions.reset_index(inplace=True,drop=True)
-#     daily_transactions.reset_index(inplace=True)
-#     daily_transactions.rename(columns={'index': 'transaction_id'}, inplace=True)
-#     # daily_transactions = daily_transactions[daily_transactions['user_id'].isin(distinct_users)]   
-    
-        
-#     es = ft.EntitySet("bux_cltv")
-    
-#     es.entity_from_dataframe(entity_id='users',
-#                         dataframe=user_details,
-#                         index='user_id',
-#                         time_index='bux_account_created_dts')
-    
-#     es.entity_from_dataframe(entity_id='transactions',
-#                         dataframe=daily_transactions,
-#                         index='transaction_id',
-#                         time_index='date')
-    
-#     es.add_relationship(ft.Relationship(es['users']['user_id'], es['transactions']['user_id']))
-    
-    
-#     return es
-
-
-# parallelization
-# def make_labels(es):
-#     # user_details = es["users"].df 
-#     # distinct_users = user_details["user_id"].unique()
-    
-#     label_data = pd.read_csv("data/curcv_1y_6mCustomerValue_2000_3w.csv")
-
-#     # label_data = label_data[label_data['user_id'].isin(distinct_users)]
-#     label_data = label_data[label_data.columns[1:]]
-#     label_data["label"] = label_data["com"] + label_data["ff"]
-#     label_data = label_data[['user_id', 'label']]
-#     label_data = label_data.fillna(0)
-
-#     # whale_threshold = label_data["label"].quantile(0.99)
-#     whale_threshold = 50
-#     label_data["curcv"] = label_data["label"]
-#     label_data["label"] = (label_data['curcv'] > whale_threshold).astype(int)
-
-#     return label_data, es
-
-
-# no used (in the DFS notebook)
-# def calculate_feature_matrix(label_data):
-#     labels, es = label_data
-
-#     feature_matrix, features = ft.dfs(
-#         entityset=es,
-#         target_entity="users",
-#         trans_primitives=trans_primitives,
-#         agg_primitives=agg_primitives,
-#         max_depth=2,
-#         verbose=True
-#     )
-
-#     print("{} features generated".format(len(features)))
-
-#     fm_encoded, features_encoded = ft.encode_features(feature_matrix, features)
-
-#     X = fm_encoded.reset_index().merge(labels)
-
-#     # feature matrix and the encoded features needed to calculate top features
-#     return X
-
-
-# def evaluate_feature_set(X):
-
-#     X.drop(['user_id', 'curcv'], axis=1, inplace=True)
-#     X = X.fillna(0)
-#     y = X.pop('label').astype('int')
-#     y.value_counts()
-
-
-#     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-#     rf_clf = RandomForestClassifier(n_estimators=400, n_jobs=-1)
-#     rf_clf.fit(X_train,y_train)
-#     y_pred = rf_clf.predict(X_test)
-#     f1_score(y_test, y_pred, average=None)[1]
-
-#     cm = confusion_matrix(y_test, y_pred)
-#     plot_confusion_matrix(cm, ['Non-whale', 'Whale'], title='Customer lifetime value prediction')
-
-
-#     # calculate the top 20 features based on feature importance
-#     top_features = feature_importances(rf_clf, features_encoded, n=20)
-#     print(top_features)
-
-#     # random forest classifer, 5-fold cross-validation
-#     scores = cross_val_score(estimator=rf_clf, X=X, y=y, scoring='f1', verbose=True, cv=5, n_jobs=-1)
-#     return "F1 %.2f +/- %.2f" % (scores.mean(), scores.std())
-
-
-# def train_xgb(X_train, labels, params):
-#     Xtr, Xv, ytr, yv = train_test_split(X_train.values,
-#                                         labels,
-#                                         test_size=0.2,
-#                                         random_state=0)
-
-#     dtrain = xgb.DMatrix(Xtr, label=ytr)
-#     dvalid = xgb.DMatrix(Xv, label=yv)
-
-#     evals = [(dtrain, 'train'), (dvalid, 'valid')]
-
-#     model = xgb.train(params=params, dtrain=dtrain,
-#         num_boost_round=227, evals=evals, early_stopping_rounds=60,
-#         maximize=False, verbose_eval=10)
-
-#     print('Modeling AUC %.5f' % model.best_score)
-#     return model
-
-
-# def predict_xgb(model, X_test):
-
-#     dtest = xgb.DMatrix(X_test.values)
-#     y_test = model.predict(dtest)
-#     return y_test
-
-
-# def feature_importances(X, clf, feats=10):
-#     feature_imps = [(imp, X.columns[i]) 
-#                     for i, imp in enumerate(clf.feature_importances_)]
-#     feature_imps.sort()
-#     feature_imps.reverse()
-
-#     for i, f in enumerate(feature_imps[0:feats]):
-#         print('{}: {} [{:.3f}]'.format(i + 1, f[1], f[0]))
-#     print('-----\n')
-#     return [f[1] for f in feature_imps[:feats]]
-
-#  sample of users func1
-# def calculate_cohort_limit(user_details, ratio):
-#     cohort_limit_df = pd.DataFrame(user_details.groupby("month_year").count()["user_id"]).reset_index()
-#     cohort_limit_df.columns = [["month_year", "count"]]
-#     cohort_limit_df["count/n"] = (cohort_limit_df["count"] / ratio).astype(int)
-#     return cohort_limit_df
-
-# #  sample of users func2
-# def limit_users(cohort_limit_df, user_details, month_year):
-#     limited_users = int(cohort_limit_df[cohort_limit_df["month_year"] == month_year]["count/n"])
-#     limited_df = user_details[user_details["month_year"] == month_year][:limited_users]
-#     return limited_df
-
-
-# # fill the calendar data
-# def create_date_range(row):
-#     temp_df = pd.DataFrame()
-#     temp_df['date'] = pd.Series(pd.date_range(row['date'], pd.to_datetime(row['date']) + pd.DateOffset(days=20)).strftime('%Y-%m-%d'))
-#     temp_df['user_id'] = pd.Series([row['user_id']]*len(temp_df))
-#     return temp_df
-
-# cohort_limit_df = utils.calculate_cohort_limit(user_details, sample_user_ratio)
-
-# user_details_temp = pd.DataFrame()
-# for month_year in cohort_limit_df["month_year"]:
-#     user_details_temp = user_details_temp.append(utils.limit_users(cohort_limit_df, user_details, month_year))
-
-# user_details = user_details_temp
-
-
-
-# In Notebook
-
-
-# user_details = pd.read_csv("data/users_1y_6mCustomerValue.csv")
-# user_segments_query = """
-#         SELECT a.user_id, b.bux_account_created_dts::date, a.segment_value, a.valid_from_date, a.valid_to_date
-#         FROM reporting.user_segments a
-#         LEFT JOIN reporting.user_details b USING (user_id)
-#         WHERE segment_type = 'Trading Segment'
-#         AND b.bux_account_created_dts::date BETWEEN '2016-10-01' AND '2017-09-30'
-
-# """
-# user_segments = sql_query(user_segments_query)
-# user_segments.to_csv("data/user_segments.csv")
-# len(user_segments)
-
-# user_segments = pd.read_csv("data/user_segments.csv")
-# # user_segments = user_segments[user_segments['user_id'].isin(distinct_users)]
-# user_segments = user_segments[user_segments.columns[1:]]
-# user_segments.reset_index(drop=True,inplace=True)
-
-# last_valid_before = '9999-12-31'
-# last_valid_after = '2100-12-31'
-# user_segments['valid_to_date'] = user_segments['valid_to_date'].astype(str)
-# user_segments['valid_to_date'] = pd.Series([last_valid_after if value ==  last_valid_before else value for value in user_segments['valid_to_date']])
-
-# user_segments['bux_account_created_dts'] = pd.to_datetime(user_segments['bux_account_created_dts'])
-# user_segments['valid_from_date'] = pd.to_datetime(user_segments['valid_from_date'])
-# user_segments['valid_to_date'] = pd.to_datetime(user_segments['valid_to_date'])
-# user_segments['3w_usage'] = user_segments['bux_account_created_dts'] + pd.DateOffset(days=20)
-
-# user_segments.head()
-
-# # users that didn't change their segment
-# # the last value for users that have the last update before 3 weeks after usage
-# temp_df_1 = user_segments[(user_segments['valid_to_date'] == last_valid_after) & (user_segments['valid_from_date'] < user_segments['3w_usage'])]
-# temp_df_1_uniques = temp_df_1['user_id'].unique()
-
-# # users that changed their segment
-# # the last value of users that aren't the first segment
-# temp_df_2 = user_segments[~user_segments['user_id'].isin(temp_df_1_uniques)].groupby('user_id').max().reset_index()
-
-# temp_df = temp_df_1[['user_id', 'segment_value']].append(temp_df_2[['user_id', 'segment_value']])
-# len(temp_df) == len(user_segments['user_id'].unique())
-
-# user_details = pd.merge(user_details, temp_df, on='user_id', how='left')
-# user_details['segment_value'].value_counts().plot(kind='bar');
-# # % of users have a segment
-# len(temp_df) / len(user_details)
-# mode_value = user_details['segment_value'].mode()[0]
-# user_details['segment_value'] = user_details['segment_value'].astype(str)
-# imputed_values = pd.Series([mode_value if value == 'nan' else value for value in user_details['segment_value']])
-# user_details['segment_value'] = imputed_value
-
-# calendar_input = pd.DataFrame(daily_transactions.groupby('user_id').min()['date']).reset_index()
-# calendar_input.head()
-# calendar_df = pd.DataFrame()
-
-# for index, row in calendar_input.iterrows():
-#     temp_df = utils.create_date_range(row)
-#     calendar_df = calendar_df.append(temp_df)
-
-# calendar_df['date'] = pd.to_datetime(calendar_df['date'])
-# len(calendar_df) / len(calendar_df['user_id'].unique())
-# daily_transactions_merged = pd.merge(calendar_df, daily_transactions, on=['user_id', 'date'], how='left')
-# len(daily_transactions_merged) / len(daily_transactions)
-# daily_transactions = daily_transactions_merged
